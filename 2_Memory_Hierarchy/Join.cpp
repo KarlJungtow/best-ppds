@@ -5,7 +5,6 @@
 #include <iostream>
 #include <string>
 #include <chrono>
-#include <cmath>
 using namespace std;
 
 
@@ -156,7 +155,8 @@ vector<ResultRelation> performJoin(const vector<CastRelation>& castRelation, con
     vector<vector<ResultRelation>> thread_results(castSlices.size());
 
     for (int i = 0; i < thread_results.size(); i++) {
-        thread_results[i].reserve(floor(castSlices[i].size() * 1.25));
+        auto estimatedResultCount = castSlices[i].size() * 1.25;
+        thread_results[i].reserve(estimatedResultCount);
     }
 
 #pragma omp parallel for schedule(dynamic) num_threads(numThreads) default(none) shared(castSlices, titleSlices, thread_results)
@@ -174,8 +174,101 @@ vector<ResultRelation> performJoin(const vector<CastRelation>& castRelation, con
     for (const auto& vec : thread_results) {
         resultRelation.insert(resultRelation.end(), vec.begin(), vec.end());
     }
-    for (auto result : resultRelation) {
-        cout << result.movieId << " + " << result.titleId << endl;
-    }
+
     return resultRelation;
+}
+
+//----------------------------------------------------------------------------------------------------------------------------
+CastRelation makeCast(int id, int pid, int mid, int prid, const std::string& note, int order, int rid) {
+    CastRelation c{};
+    c.castInfoId = id;
+    c.personId = pid;
+    c.movieId = mid;
+    c.personRoleId = prid;
+    strncpy(c.note, note.c_str(), sizeof(c.note));
+    c.note[sizeof(c.note) - 1] = '\0'; // Ensure null-terminated
+    c.nrOrder = order;
+    c.roleId = rid;
+    return c;
+}
+
+TitleRelation makeTitle(int tid, const std::string& title, const std::string& index, int kind, int year, int imdb, const std::string& code) {
+    TitleRelation t{};
+    t.titleId = tid;
+    strncpy(t.title, title.c_str(), sizeof(t.title));
+    t.title[sizeof(t.title) - 1] = '\0';
+
+    strncpy(t.imdbIndex, index.c_str(), sizeof(t.imdbIndex));
+    t.imdbIndex[sizeof(t.imdbIndex) - 1] = '\0';
+
+    t.kindId = kind;
+    t.productionYear = year;
+    t.imdbId = imdb;
+
+    strncpy(t.phoneticCode, code.c_str(), sizeof(t.phoneticCode));
+    t.phoneticCode[sizeof(t.phoneticCode) - 1] = '\0';
+
+    // Leave other fields zero for simplicity
+    return t;
+}
+
+int main() {std::vector<CastRelation> castRelations = {
+    makeCast(1, 101, 10, 1, "note1", 0, 1),
+    makeCast(2, 102, 10, 2, "note2", 1, 2),
+    makeCast(3, 103, 11, 1, "note3", 2, 1),
+    makeCast(4, 104, 12, 1, "note4", 3, 1),
+    makeCast(5, 105, 12, 2, "note5", 4, 3),
+    makeCast(6, 106, 13, 1, "note6", 5, 2),
+    makeCast(7, 107, 14, 1, "note7", 6, 1)
+};
+
+    std::vector<TitleRelation> titleRelations = {
+        makeTitle(10, "Title A", "", 1, 2001, 1001, ""),
+        makeTitle(10, "Title A.1", "", 1, 2001, 1002, ""),
+        makeTitle(11, "Title B", "", 1, 2002, 1003, ""),
+        makeTitle(12, "Title C", "", 1, 2003, 1004, ""),
+        makeTitle(13, "Title D", "", 1, 2004, 1005, ""),
+        makeTitle(14, "Title E", "", 1, 2005, 1006, "")
+    };
+
+
+    // Pick cutoff indices somewhere in the middle
+    int cast_cutoff_index = 5;  // Points to movieId = 13
+    int title_cutoff_index = 4; // Points to titleId = 13
+
+    std::cout << "=== Original CastRelation Entries ===" << std::endl;
+    for (const auto& c : castRelations) {
+        std::cout << castRelationToString(c) << std::endl;
+    }
+
+    std::cout << "\n=== Original TitleRelation Entries ===" << std::endl;
+    for (const auto& t : titleRelations) {
+        std::cout << titleRelationToString(t) << std::endl;
+    }
+
+    // Perform splitting
+    int split_cast = splitCast(castRelations, cast_cutoff_index);
+    int split_title = splitTitle(titleRelations, title_cutoff_index);
+
+    std::cout << "\n--- splitCast at index " << cast_cutoff_index << " returned: " << split_cast << std::endl;
+    std::cout << "--- splitTitle at index " << title_cutoff_index << " returned: " << split_title << std::endl;
+
+    // Use splitRelations to determine safe cutoff for parallel chunks
+    std::vector<int> splits = splitRelations(castRelations, titleRelations, cast_cutoff_index, title_cutoff_index);
+
+    std::cout << "\n=== splitRelations Output ===" << std::endl;
+    std::cout << "Title split index: " << splits[0] << std::endl;
+    std::cout << "Cast split index:  " << splits[1] << std::endl;
+
+    std::cout << "\n=== Cast Slice ===" << std::endl;
+    for (int i = 0; i < splits[1]; ++i) {
+        std::cout << castRelationToString(castRelations[i]) << std::endl;
+    }
+
+    std::cout << "\n=== Title Slice ===" << std::endl;
+    for (int i = 0; i < splits[0]; ++i) {
+        std::cout << titleRelationToString(titleRelations[i]) << std::endl;
+    }
+
+    return 0;
 }
