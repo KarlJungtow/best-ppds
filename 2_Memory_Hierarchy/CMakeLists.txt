@@ -41,10 +41,10 @@ include(FetchContent)
 include(ExternalProject)
 
 FetchContent_Declare(
-    googletest
-    GIT_REPOSITORY https://github.com/google/googletest
-    GIT_TAG        v1.14.0
-    )
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest
+        GIT_TAG        v1.14.0
+)
 
 FetchContent_GetProperties(googletest)
 if(NOT googletest_POPULATED)
@@ -80,11 +80,11 @@ target_include_directories(${PROJECT_EXECUTABLE} PRIVATE ${gtest_SOURCE_DIR}/inc
 
 # Add compile definitions
 target_compile_definitions(${PROJECT_ROOT} PRIVATE
-    DATA_DIRECTORY="${DATA_DIRECTORY}"
-    SOURCE_DIRECTORY="${SOURCE_DIRECTORY}"
-    )
+        DATA_DIRECTORY="${DATA_DIRECTORY}"
+        SOURCE_DIRECTORY="${SOURCE_DIRECTORY}"
+)
 
 target_compile_definitions(${PROJECT_EXECUTABLE} PRIVATE
-    DATA_DIRECTORY="${DATA_DIRECTORY}"
-    SOURCE_DIRECTORY="${SOURCE_DIRECTORY}"
-    )
+        DATA_DIRECTORY="${DATA_DIRECTORY}"
+        SOURCE_DIRECTORY="${SOURCE_DIRECTORY}"
+)

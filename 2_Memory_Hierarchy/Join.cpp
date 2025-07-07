@@ -5,153 +5,172 @@
 #include <iostream>
 #include <string>
 #include <chrono>
-#include <algorithm>
+#include <cmath>
 using namespace std;
 
-// Finds the start of the current group
-uint_fast32_t findGroupStart(const vector<CastRelation>& relation, uint_fast32_t pos) {
-    const int32_t current_id = relation[pos].movieId;
-    while (pos > 0 && relation[pos-1].movieId == current_id) {
-        --pos;
+
+int splitTitle(const vector<TitleRelation>& titleRelation, int index_of_cutoff) {
+    if (index_of_cutoff < 0 || index_of_cutoff >= static_cast<int>(titleRelation.size()))
+        return 0;
+
+    int current_id = titleRelation[index_of_cutoff].titleId;
+    int current_index = index_of_cutoff;
+
+    if (current_index + 1 < static_cast<int>(titleRelation.size()) &&
+        titleRelation[current_index + 1].titleId != current_id) {
+        while (current_index > 0 && titleRelation[current_index - 1].titleId == current_id) {
+            current_index--;
+        }
     }
-    return pos;
+
+    return current_index;
 }
 
-// Finds the end of the current group (exclusive)
-uint_fast32_t findGroupEnd(const vector<CastRelation>& relation, uint_fast32_t pos) {
-    const int32_t current_id = relation[pos].movieId;
-    const size_t size = relation.size();
-    while (pos < size && relation[pos].movieId == current_id) {
-        ++pos;
+// Safely walks backward through titleRelation to find cutoff
+int backTitle(const vector<TitleRelation>& titleRelation, int movieId, int index_of_cutoff) {
+    int current_index = index_of_cutoff;
+    while (current_index > 0 && titleRelation[current_index].titleId > movieId) {
+        current_index--;
     }
-    return pos;
+    return current_index;
 }
 
-// Finds the start of the current group
-uint_fast32_t findGroupStart(const vector<TitleRelation>& relation, uint_fast32_t pos) {
-    const int32_t current_id = relation[pos].titleId;
-    while (pos > 0 && relation[pos-1].titleId == current_id) {
-        --pos;
+// Safely splits castRelation vector at cutoff index
+int splitCast(const vector<CastRelation>& castRelation, int index_of_cutoff) {
+    if (index_of_cutoff < 0 || index_of_cutoff >= static_cast<int>(castRelation.size()))
+        return 0;
+
+    int current_id = castRelation[index_of_cutoff].movieId;
+    int current_index = index_of_cutoff;
+
+    if (current_index + 1 < static_cast<int>(castRelation.size()) &&
+        castRelation[current_index + 1].movieId != current_id) {
+        while (current_index > 0 && castRelation[current_index - 1].movieId == current_id) {
+            current_index--;
+        }
     }
-    return pos;
+
+    return current_index;
 }
 
-// Finds the end of the current group (exclusive)
-uint_fast32_t findGroupEnd(const vector<TitleRelation>& relation, uint_fast32_t pos) {
-    const int32_t current_id = relation[pos].titleId;
-    const size_t size = relation.size();
-    while (pos < size && relation[pos].titleId == current_id) {
-        ++pos;
+// Safely walks backward through castRelation to find cutoff
+int backCast(const vector<CastRelation>& castRelation, int titleId, int index_of_cutoff) {
+    int current_index = index_of_cutoff;
+    while (current_index > 0 && castRelation[current_index].movieId > titleId) {
+        current_index--;
     }
-    return pos;
+    return current_index;
 }
 
-// Performs join on two slices using group-aware merge
-vector<ResultRelation> performJoinThread(const vector<CastRelation>& castRelation,
-                                         const vector<TitleRelation>& titleRelation) {
+// Determines how to slice castRelation and titleRelation at a cutoff point
+vector<int> splitRelations(const vector<CastRelation>& castRelation, const vector<TitleRelation>& titleRelation, int cast_index_of_cutoff, int title_index_of_cutoff) {
+    if (castRelation.empty() || titleRelation.empty() ||
+        cast_index_of_cutoff >= static_cast<int>(castRelation.size()) ||
+        title_index_of_cutoff >= static_cast<int>(titleRelation.size())) {
+        return {0, 0};
+        }
+
+    int title_id = titleRelation[title_index_of_cutoff].titleId;
+    int cast_id = castRelation[cast_index_of_cutoff].movieId;
+
+    if (title_id > cast_id) {
+        int title_index = splitTitle(titleRelation, title_index_of_cutoff);
+        int cast_index = backCast(castRelation, titleRelation[title_index].titleId, cast_index_of_cutoff);
+        return {static_cast<int>(title_index), static_cast<int>(cast_index)};
+    } else {
+        int cast_index = splitCast(castRelation, cast_index_of_cutoff);
+        int title_index = backTitle(titleRelation, castRelation[cast_index].movieId, title_index_of_cutoff);
+        return {static_cast<int>(title_index), static_cast<int>(cast_index)};
+    }
+}
+
+// Performs join on two slices of cast/title relation
+vector<ResultRelation> performJoinThread(const vector<CastRelation>& castRelation, const vector<TitleRelation>& titleRelation) {
     vector<ResultRelation> resultTuples;
-    size_t c = 0;
-    size_t t = 0;
-    const size_t cast_size = castRelation.size();
-    const size_t title_size = titleRelation.size();
+    int pointer_cast = 0;
+    int pointer_title = 0;
+    int old_position = 0;
 
-    while (c < cast_size && t < title_size) {
-        const int32_t cast_id = castRelation[c].movieId;
-        const int32_t title_id = titleRelation[t].titleId;
-
-        if (cast_id < title_id) {
-            // Advance to next cast group
-            c = findGroupEnd(castRelation, c);
-        } else if (cast_id > title_id) {
-            // Advance to next title group
-            t = findGroupEnd(titleRelation, t);
+    while (pointer_cast < static_cast<int>(castRelation.size()) && pointer_title < static_cast<int> (titleRelation.size())) {
+        if (castRelation[pointer_cast].movieId < titleRelation[pointer_title].titleId) {
+            pointer_cast++;
+        } else if (castRelation[pointer_cast].movieId > titleRelation[pointer_title].titleId) {
+            pointer_title++;
         } else {
-            // Found matching groups
-            const size_t cast_group_start = c;
-            const size_t cast_group_end = findGroupEnd(castRelation, c);
-            const size_t title_group_start = t;
-            const size_t title_group_end = findGroupEnd(titleRelation, t);
-
-            // Cross product of matching groups
-            for (size_t i = cast_group_start; i < cast_group_end; ++i) {
-                for (size_t j = title_group_start; j < title_group_end; ++j) {
-                    resultTuples.push_back(createResultTuple(castRelation[i], titleRelation[j]));
-                }
+            old_position = pointer_cast;
+            while (pointer_cast < castRelation.size() &&
+                   castRelation[pointer_cast].movieId == titleRelation[pointer_title].titleId) {
+                resultTuples.push_back(createResultTuple(castRelation[pointer_cast], titleRelation[pointer_title]));
+                pointer_cast++;
             }
-
-            // Move to next groups
-            c = cast_group_end;
-            t = title_group_end;
+            pointer_cast = old_position;
+            pointer_title++;
         }
     }
 
     return resultTuples;
 }
 
-// Creates cache-sized chunks respecting group boundaries
-vector<ResultRelation> performJoin(const vector<CastRelation>& castRelation,
-                                   const vector<TitleRelation>& titleRelation,
-                                   int numThreads) {
-    const size_t half_cache_bytes = 256 * 1024;  // 256KB
-    const size_t min_chunk_size = half_cache_bytes / sizeof(CastRelation);
+vector<ResultRelation> performJoin(const vector<CastRelation>& castRelation, const vector<TitleRelation>& titleRelation, int numThreads) {
+    int half_cache_size_with_padding = 256 * 1024;
 
-    if (castRelation.empty() || titleRelation.empty()) {
+    if (castRelation.empty()) {
+        printf("Size is empty!");
         return {};
     }
+    int index_of_cutoff = half_cache_size_with_padding / static_cast<int>(sizeof(castRelation[0]));
 
     vector<vector<CastRelation>> castSlices;
     vector<vector<TitleRelation>> titleSlices;
-    size_t c_pos = 0;
-    size_t t_pos = 0;
+    vector<ResultRelation> resultRelation;
 
-    // Create chunks respecting group boundaries
-    while (c_pos < castRelation.size() && t_pos < titleRelation.size()) {
-        // Start new chunks at current positions
-        const size_t c_start = c_pos;
-        const size_t t_start = t_pos;
+    int title_offset = 0;
+    int cast_offset = 0;
+    while (castRelation.size() > cast_offset + index_of_cutoff &&
+           titleRelation.size() > title_offset + index_of_cutoff) {
 
-        // Determine chunk end positions
-        size_t c_end = min(c_pos + min_chunk_size, castRelation.size());
-        size_t t_end = min(t_pos + min_chunk_size, titleRelation.size());
+        vector<int> splitIndices = splitRelations(castRelation, titleRelation, index_of_cutoff + cast_offset, index_of_cutoff + title_offset);
+        int title_cutoff = splitIndices[0];
+        int cast_cutoff  = splitIndices[1];
 
-        // Extend to end of current groups
-        if (c_end < castRelation.size()) {
-            c_end = findGroupEnd(castRelation, c_end - 1);
-        }
-        if (t_end < titleRelation.size()) {
-            t_end = findGroupEnd(titleRelation, t_end - 1);
-        }
+        auto cast_end = std::min(castRelation.size(), static_cast<size_t>(cast_cutoff));
+        auto title_end = std::min(titleRelation.size(), static_cast<size_t>(title_cutoff));
 
-        // Create slices
-        castSlices.emplace_back(
-            castRelation.begin() + c_start,
-            castRelation.begin() + c_end
-        );
+        castSlices.emplace_back(castRelation.begin() + cast_offset, castRelation.begin() + cast_end);
+        titleSlices.emplace_back(titleRelation.begin() + title_offset, titleRelation.begin() + title_end);
 
-        titleSlices.emplace_back(
-            titleRelation.begin() + t_start,
-            titleRelation.begin() + t_end
-        );
+        title_offset += title_cutoff;
+        cast_offset += cast_cutoff;
+    }
 
-        // Move to next chunks
-        c_pos = c_end;
-        t_pos = t_end;
+    if (cast_offset < castRelation.size() && title_offset < titleRelation.size()) {
+        castSlices.emplace_back(castRelation.begin() + cast_offset, castRelation.end());
+        titleSlices.emplace_back(titleRelation.begin() + title_offset, titleRelation.end());
+    }
+
+    if(castSlices.size() != titleSlices.size()) {
+        printf("Unterschiedlich viele Chunks!");
+        return {};
     }
 
     vector<vector<ResultRelation>> thread_results(castSlices.size());
 
-    #pragma omp parallel for schedule(dynamic) num_threads(numThreads)
+    for (int i = 0; i < thread_results.size(); i++) {
+        thread_results[i].reserve(floor(castSlices[i].size() * 1.25));
+    }
+
+#pragma omp parallel for schedule(dynamic) num_threads(numThreads) default(none) shared(castSlices, titleSlices, thread_results)
     for (int i = 0; i < static_cast<int>(castSlices.size()); ++i) {
         thread_results[i] = performJoinThread(castSlices[i], titleSlices[i]);
     }
 
-    // Combine results
-    vector<ResultRelation> resultRelation;
     size_t totalSize = 0;
-    for (const auto& res : thread_results) {
-        totalSize += res.size();
+    for (const auto& localResultRelation : thread_results) {
+        totalSize += localResultRelation.size();
     }
+
     resultRelation.reserve(totalSize);
+
     for (const auto& vec : thread_results) {
         resultRelation.insert(resultRelation.end(), vec.begin(), vec.end());
     }
