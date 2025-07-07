@@ -174,6 +174,8 @@ vector<ResultRelation> performJoin(const vector<CastRelation>& castRelation, con
     for (const auto& vec : thread_results) {
         resultRelation.insert(resultRelation.end(), vec.begin(), vec.end());
     }
-
+    for (auto result : resultRelation) {
+        cout << result.movieId << " + " << result.titleId << endl;
+    }
     return resultRelation;
 }
