@@ -5,11 +5,6 @@
 using namespace std;
 
 
-// Assumes splitCast(castRelation) is defined as before, returning
-// half-open [0…castRelation.size()] cut indices.
-//
-// Also assumes every movieId in castRelation appears in titleRelation
-
 uint_fast32_t splitTitle(const vector<TitleRelation>& titleRelation, int index_of_cutoff) {
     int current_id = titleRelation[index_of_cutoff].titleId;
     int current_index = index_of_cutoff;
