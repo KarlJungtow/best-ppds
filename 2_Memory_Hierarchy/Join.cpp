@@ -2,104 +2,81 @@
 #include <gtest/gtest.h>
 #include <omp.h>
 #include <vector>
-#include <iostream>
-#include <string>
-#include <chrono>
-#include <cmath>
 using namespace std;
 
-
-int splitTitle(const vector<TitleRelation>& titleRelation, int index_of_cutoff) {
-    if (index_of_cutoff < 0 || index_of_cutoff >= static_cast<int>(titleRelation.size()))
-        return 0;
-
+uint_fast32_t splitTitle(const vector<TitleRelation>& titleRelation, int index_of_cutoff) {
     int current_id = titleRelation[index_of_cutoff].titleId;
     int current_index = index_of_cutoff;
 
-    if (current_index + 1 < static_cast<int>(titleRelation.size()) &&
-        titleRelation[current_index + 1].titleId != current_id) {
-        while (current_index > 0 && titleRelation[current_index - 1].titleId == current_id) {
+    if (titleRelation[current_index+1].titleId != current_id) {
+        do {
             current_index--;
-        }
+        } while (titleRelation[current_index-1].titleId == current_id);
     }
-
     return current_index;
 }
 
-// Safely walks backward through titleRelation to find cutoff
-int backTitle(const vector<TitleRelation>& titleRelation, int movieId, int index_of_cutoff) {
+uint_fast32_t backTitle(const vector<TitleRelation>& titleRelation, int movieId, int index_of_cutoff) {
     int current_index = index_of_cutoff;
-    while (current_index > 0 && titleRelation[current_index].titleId > movieId) {
+    while(titleRelation[current_index].titleId > movieId) {
         current_index--;
     }
     return current_index;
 }
 
-// Safely splits castRelation vector at cutoff index
-int splitCast(const vector<CastRelation>& castRelation, int index_of_cutoff) {
-    if (index_of_cutoff < 0 || index_of_cutoff >= static_cast<int>(castRelation.size()))
-        return 0;
-
+uint_fast32_t splitCast(const vector<CastRelation>& castRelation, int index_of_cutoff) {
     int current_id = castRelation[index_of_cutoff].movieId;
     int current_index = index_of_cutoff;
 
-    if (current_index + 1 < static_cast<int>(castRelation.size()) &&
-        castRelation[current_index + 1].movieId != current_id) {
-        while (current_index > 0 && castRelation[current_index - 1].movieId == current_id) {
+    if (castRelation[current_index+1].movieId != current_id) {
+        do {
             current_index--;
-        }
+        } while (castRelation[current_index-1].movieId == current_id);
     }
-
     return current_index;
 }
 
-// Safely walks backward through castRelation to find cutoff
-int backCast(const vector<CastRelation>& castRelation, int titleId, int index_of_cutoff) {
+uint_fast32_t backCast(const vector<CastRelation>& castRelation, int titleId, int index_of_cutoff) {
     int current_index = index_of_cutoff;
-    while (current_index > 0 && castRelation[current_index].movieId > titleId) {
+    while (castRelation[current_index].movieId > titleId) {
         current_index--;
     }
     return current_index;
 }
 
-// Determines how to slice castRelation and titleRelation at a cutoff point
-vector<int> splitRelations(const vector<CastRelation>& castRelation, const vector<TitleRelation>& titleRelation, int cast_index_of_cutoff, int title_index_of_cutoff) {
-    if (castRelation.empty() || titleRelation.empty() ||
-        cast_index_of_cutoff >= static_cast<int>(castRelation.size()) ||
-        title_index_of_cutoff >= static_cast<int>(titleRelation.size())) {
-        return {0, 0};
-        }
+vector<uint_fast32_t> splitRelations( const vector<CastRelation>& castRelation, const vector<TitleRelation>& titleRelation, int index_of_cutoff) {
 
-    int title_id = titleRelation[title_index_of_cutoff].titleId;
-    int cast_id = castRelation[cast_index_of_cutoff].movieId;
+    int title_id = titleRelation[index_of_cutoff].titleId;
+    int cast_id = castRelation[index_of_cutoff].movieId;
 
     if (title_id > cast_id) {
-        int title_index = splitTitle(titleRelation, title_index_of_cutoff);
-        int cast_index = backCast(castRelation, titleRelation[title_index].titleId, cast_index_of_cutoff);
-        return {static_cast<int>(title_index), static_cast<int>(cast_index)};
+        int title_index = splitTitle(titleRelation, index_of_cutoff);
+        int cast_index = backCast(castRelation, titleRelation[title_index].titleId, index_of_cutoff);
+        return {static_cast<uint_fast32_t>(title_index), static_cast<uint_fast32_t>(cast_index)};
     } else {
-        int cast_index = splitCast(castRelation, cast_index_of_cutoff);
-        int title_index = backTitle(titleRelation, castRelation[cast_index].movieId, title_index_of_cutoff);
-        return {static_cast<int>(title_index), static_cast<int>(cast_index)};
+        int cast_index = splitCast(castRelation, index_of_cutoff);
+        int title_index = backTitle(titleRelation, castRelation[cast_index].movieId, index_of_cutoff);
+        return {static_cast<uint_fast32_t>(title_index), static_cast<uint_fast32_t>(cast_index)};
     }
 }
 
-// Performs join on two slices of cast/title relation
+
 vector<ResultRelation> performJoinThread(const vector<CastRelation>& castRelation, const vector<TitleRelation>& titleRelation) {
+    // IMPORTANT: You can assume for this benchmark that the join keys are sorted in both relations.
     vector<ResultRelation> resultTuples;
+
     int pointer_cast = 0;
     int pointer_title = 0;
     int old_position = 0;
 
-    while (pointer_cast < static_cast<int>(castRelation.size()) && pointer_title < static_cast<int> (titleRelation.size())) {
-        if (castRelation[pointer_cast].movieId < titleRelation[pointer_title].titleId) {
+    while(pointer_cast < castRelation.size() && pointer_title < titleRelation.size()) {
+        if(castRelation[pointer_cast].movieId < titleRelation[pointer_title].titleId) {
             pointer_cast++;
-        } else if (castRelation[pointer_cast].movieId > titleRelation[pointer_title].titleId) {
+        } else if(castRelation[pointer_cast].movieId > titleRelation[pointer_title].titleId) {
             pointer_title++;
         } else {
             old_position = pointer_cast;
-            while (pointer_cast < castRelation.size() &&
-                   castRelation[pointer_cast].movieId == titleRelation[pointer_title].titleId) {
+            while(pointer_cast < castRelation.size() && castRelation[pointer_cast].movieId == titleRelation[pointer_title].titleId) {
                 resultTuples.push_back(createResultTuple(castRelation[pointer_cast], titleRelation[pointer_title]));
                 pointer_cast++;
             }
@@ -111,59 +88,50 @@ vector<ResultRelation> performJoinThread(const vector<CastRelation>& castRelatio
     return resultTuples;
 }
 
-vector<ResultRelation> performJoin(const vector<CastRelation>& castRelation, const vector<TitleRelation>& titleRelation, int numThreads) {
-    int half_cache_size_with_padding = 256 * 1024;
 
-    if (castRelation.empty()) {
-        printf("Size is empty!");
-        return {};
-    }
-    int index_of_cutoff = half_cache_size_with_padding / static_cast<int>(sizeof(castRelation[0]));
+vector<ResultRelation> performJoin(const vector<CastRelation>& castRelation, const vector<TitleRelation>& titleRelation, int numThreads) {
+    // L2-Chache Größe
+    int half_cache_size_with_padding = 256 * 1024;
+    int index_of_cutoff = half_cache_size_with_padding / sizeof(castRelation[0]);
 
     vector<vector<CastRelation>> castSlices;
     vector<vector<TitleRelation>> titleSlices;
     vector<ResultRelation> resultRelation;
 
-    int title_offset = 0;
-    int cast_offset = 0;
-    while (castRelation.size() > cast_offset + index_of_cutoff &&
-           titleRelation.size() > title_offset + index_of_cutoff) {
+    int offset = 0;
+    // Gehe die Relations solange durch, wie beide Größer sind als der halbe Cache
+    while (castRelation.size() - offset > half_cache_size_with_padding && titleRelation.size() - offset > half_cache_size_with_padding) {
+        vector<uint_fast32_t> splitIndices = splitRelations(castRelation, titleRelation, index_of_cutoff + offset);
+        uint_fast32_t title_cutoff = splitIndices[0];
+        uint_fast32_t cast_cutoff  = splitIndices[1];
 
-        vector<int> splitIndices = splitRelations(castRelation, titleRelation, index_of_cutoff + cast_offset, index_of_cutoff + title_offset);
-        int title_cutoff = splitIndices[0];
-        int cast_cutoff  = splitIndices[1];
-
-        auto cast_end = std::min(castRelation.size(), static_cast<size_t>(cast_cutoff));
-        auto title_end = std::min(titleRelation.size(), static_cast<size_t>(title_cutoff));
-
-        castSlices.emplace_back(castRelation.begin() + cast_offset, castRelation.begin() + cast_end);
-        titleSlices.emplace_back(titleRelation.begin() + title_offset, titleRelation.begin() + title_end);
-
-        title_offset += title_cutoff;
-        cast_offset += cast_cutoff;
+        castSlices.emplace_back(castRelation.begin() + offset, castRelation.begin() + cast_cutoff + offset);
+        titleSlices.emplace_back(titleRelation.begin() + offset, titleRelation.begin() + title_cutoff + offset);
+        offset += half_cache_size_with_padding;
     }
 
-    if (cast_offset < castRelation.size() && title_offset < titleRelation.size()) {
-        castSlices.emplace_back(castRelation.begin() + cast_offset, castRelation.end());
-        titleSlices.emplace_back(titleRelation.begin() + title_offset, titleRelation.end());
+    // Letztes Stück auch noch hinzufügen
+    if (offset < castRelation.size() && offset < titleRelation.size()) {
+        castSlices.emplace_back(castRelation.begin() + offset, castRelation.end());
+        titleSlices.emplace_back(titleRelation.begin() + offset, titleRelation.end());
     }
 
-    if(castSlices.size() != titleSlices.size()) {
-        printf("Unterschiedlich viele Chunks!");
-        return {};
-    }
-
+    // Vector für lokale Ergebnisse
     vector<vector<ResultRelation>> thread_results(castSlices.size());
 
-    for (int i = 0; i < thread_results.size(); i++) {
-        thread_results[i].reserve(floor(castSlices[i].size() * 1.25));
+    for (size_t i = 0; i < thread_results.size(); i++) {
+        size_t estimatedResultCount = castSlices[i].size()*1.25;
+        thread_results[i].reserve(estimatedResultCount);
     }
 
-#pragma omp parallel for schedule(dynamic) num_threads(numThreads) default(none) shared(castSlices, titleSlices, thread_results)
+
+    // Threads einzelne Chunks ausrechnen lassen
+    #pragma omp parallel for schedule(dynamic) num_threads(50)
     for (int i = 0; i < static_cast<int>(castSlices.size()); ++i) {
         thread_results[i] = performJoinThread(castSlices[i], titleSlices[i]);
     }
 
+    // Für das Ergebnis soviel Speicher reservieren, wie die einzelnen Relationen groß sind
     size_t totalSize = 0;
     for (const auto& localResultRelation : thread_results) {
         totalSize += localResultRelation.size();
@@ -171,6 +139,8 @@ vector<ResultRelation> performJoin(const vector<CastRelation>& castRelation, con
 
     resultRelation.reserve(totalSize);
 
+
+    // Ergebnisse zusammenführen
     for (const auto& vec : thread_results) {
         resultRelation.insert(resultRelation.end(), vec.begin(), vec.end());
     }
