@@ -1,98 +1,81 @@
-/*
-    Licensed under the Apache License, Version 2.0 (the "License");
-    you may not use this file except in compliance with the License.
-    You may obtain a copy of the License at
-
-        https://www.apache.org/licenses/LICENSE-2.0
-
-    Unless required by applicable law or agreed to in writing, software
-    distributed under the License is distributed on an "AS IS" BASIS,
-    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-    See the License for the specific language governing permissions and
-    limitations under the License.
-*/
-
-/*
-    Licensed under the Apache License, Version 2.0 (the "License");
-    you may not use this file except in compliance with the License.
-    You may obtain a copy of the License at
-
-        https://www.apache.org/licenses/LICENSE-2.0
-
-    Unless required by applicable law or agreed to in writing, software
-    distributed under the License is distributed on an "AS IS" BASIS,
-    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-    See the License for the specific language governing permissions and
-    limitations under the License.
-*/
-
 #include "TimerUtil.hpp"
 #include "JoinUtils.hpp"
+#include "absl/container/flat_hash_map.h"
 
 #include <unordered_map>
 #include <vector>
 #include <iostream>
 #include <gtest/gtest.h>
 #include <omp.h>
+#include <thread>
 
 
 std::vector<ResultRelation> performJoin(const std::vector<CastRelation>& castRelation,
                                         const std::vector<TitleRelation>& titleRelation,
                                         int numThreads) {
+
+    // Using Google's Hashmap go brr
+    absl::flat_hash_map<int, TitleRelation> titleMap;
+
+    //Speicherplatz reservieren
+    titleMap.reserve(titleRelation.size());
+
+    // Hashhmap füllen
+    for (const auto& title : titleRelation) {
+        titleMap.emplace(title.titleId, title);
+    }
+
+    //Jeder Thread bekommt einen Vektor
+    std::vector<std::vector<ResultRelation>> threadLocalResults(numThreads);
     omp_set_num_threads(numThreads);
-    std::vector<ResultRelation> resultTuples;
-    std::vector<std::unordered_map<int, std::vector<TitleRelation>>> localHashTables(numThreads);
 
 #pragma omp parallel
     {
-        int tid = omp_get_thread_num();
-        auto& localMap = localHashTables[tid];
 
-        size_t chunkSize = (titleRelation.size() + numThreads - 1) / numThreads;
-        size_t start = tid * chunkSize;
-        size_t end = std::min(start + chunkSize, titleRelation.size());
+        int threadId = omp_get_thread_num();
+        //Greife auf den richtigen Threadspeicher zu
+        std::vector<ResultRelation>& localResult = threadLocalResults[threadId];
+        //Reserviere genug (ist es genug?) Platz für gejointe tupel
+        localResult.reserve((castRelation.size() / numThreads) * 1.25);
 
-        for (size_t i = start; i < end; ++i) {
-            const auto& title = titleRelation[i];
-            localMap[title.titleId].emplace_back(title);
-        }
-    }
-
-    std::unordered_map<int, std::vector<TitleRelation>> globalHashTable;
-    for (const auto& localMap : localHashTables) {
-        for (const auto& [key, values] : localMap) {
-            globalHashTable[key].insert(globalHashTable[key].end(), values.begin(), values.end());
-        }
-    }
-
-    std::vector<size_t> matchCounts(castRelation.size());
-#pragma omp parallel for
-    for (size_t i = 0; i < castRelation.size(); ++i) {
-        int movieId = castRelation[i].movieId;
-        auto it = globalHashTable.find(movieId);
-        matchCounts[i] = (it != globalHashTable.end()) ? it->second.size() : 0;
-    }
-
-    std::vector<size_t> offsets(castRelation.size() + 1, 0);
-    for (size_t i = 0; i < castRelation.size(); ++i) {
-        offsets[i + 1] = offsets[i] + matchCounts[i];
-    }
-
-    resultTuples.resize(offsets.back());
-
-#pragma omp parallel for schedule(guided)
-    for (size_t i = 0; i < castRelation.size(); ++i) {
-        const auto& castTuple = castRelation[i];
-        int movieId = castTuple.movieId;
-        size_t outputPos = offsets[i];
-
-        auto it = globalHashTable.find(movieId);
-        if (it != globalHashTable.end()) {
-            for (const auto& titleTuple : it->second) {
-                resultTuples[outputPos++] = createResultTuple(castTuple, titleTuple);
+        // Round-Robin approach for cast-Relation casts
+#pragma omp for schedule(static, 508) nowait
+        for (const auto& cast : castRelation) {
+            auto it = titleMap.find(cast.movieId);
+            if (it != titleMap.end()) {
+                localResult.push_back(createResultTuple(cast, it->second));
             }
         }
     }
 
+    // Merge thread-local results
+    std::vector<ResultRelation> resultTuples;
+    // Estimate size, optionally after profiling average match rate
+    resultTuples.reserve(castRelation.size());
+
+    for (auto& local : threadLocalResults) {
+        resultTuples.insert(resultTuples.end(),
+                            std::make_move_iterator(local.begin()),
+                            std::make_move_iterator(local.end()));
+    }
+
     return resultTuples;
+}
+
+
+TEST(ParallelizationTest, TestJoiningTuples) {
+    std::cout << "Test reading data from a file.\n";
+    const auto leftRelation = loadCastRelation(DATA_DIRECTORY + std::string("cast_info_uniform.csv"), 1000000);
+    const auto rightRelation = loadTitleRelation(DATA_DIRECTORY + std::string("title_info_uniform.csv"), 1000000);
+
+    Timer timer("Parallelized Join execute");
+    timer.start();
+
+    auto resultTuples = performJoin(leftRelation, rightRelation, 8);
+
+    timer.pause();
+
+    std::cout << "Timer: " << timer << std::endl;
+    std::cout << "Result size: " << resultTuples.size() << std::endl;
+    std::cout << "\n\n";
 }
